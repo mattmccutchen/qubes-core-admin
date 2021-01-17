@@ -17,6 +17,9 @@
 #
 # You should have received a copy of the GNU Lesser General Public
 # License along with this library; if not, see <https://www.gnu.org/licenses/>.
+
+### Rework to enable asking for clipboard paste ~ Matt 2021-01-17
+
 import argparse
 import logging
 import logging.handlers
@@ -97,14 +100,21 @@ def main(args=None):
                 raise
 
         action = policy.evaluate(system_info, args.domain, args.target)
-        if args.assume_yes_for_ask and action.action == qubespolicy.Action.ask:
-            action.action = qubespolicy.Action.allow
-        if args.just_evaluate:
-            return {
-                qubespolicy.Action.allow: 0,
-                qubespolicy.Action.deny: 1,
-                qubespolicy.Action.ask: 1,
-            }[action.action]
+
+        # MATT: Unconditionally ignore --assume-yes-for-ask.
+        # --assume-yes-for-ask will be re-enabled once qubes-guid supports a
+        # /etc/qubes/guid.conf option to not pass it.
+        #if args.assume_yes_for_ask and action.action == qubespolicy.Action.ask:
+        #    action.action = qubespolicy.Action.allow
+
+        # MATT: Enable asking even if just_evaluate is used.
+        #if args.just_evaluate:
+        #    return {
+        #        qubespolicy.Action.allow: 0,
+        #        qubespolicy.Action.deny: 1,
+        #        qubespolicy.Action.ask: 1,
+        #    }[action.action]
+
         if action.action == qubespolicy.Action.ask:
             # late import to save on time for allow/deny actions
             import pydbus
@@ -124,13 +134,25 @@ def main(args=None):
                 icons[dispvm_api_name] = \
                     icons[dispvm_api_name].replace('app', 'disp')
 
+            # MATT: If just_evaluate, then the caller isn't willing to change
+            # the target, so we should force that target.
+            if args.just_evaluate:
+                target = action.original_target
+                targets_for_ask = [target]
+            else:
+                target = action.target
+                targets_for_ask = action.targets_for_ask
+
             response = proxy.Ask(args.domain, args.service_name,
-                action.targets_for_ask, action.target or '', icons)
+                targets_for_ask, target or '', icons)
             if response:
                 action.handle_user_response(True, response)
             else:
                 action.handle_user_response(False)
         log.info('%s allowed to %s', log_prefix, str(action.target))
+        # MATT: just_evaluate mode now exits here.
+        if args.just_evaluate:
+            return 0
         action.execute(caller_ident)
     except qubespolicy.PolicySyntaxError as e:
         log.error('%s error loading policy: %s', log_prefix, str(e))
